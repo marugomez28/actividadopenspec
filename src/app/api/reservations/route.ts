@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 
 const OPERATING_START_MINUTES = 6 * 60; // 06:00 (360 min)
 const OPERATING_END_MINUTES = 22 * 60; // 22:00 (1320 min)
+const MAX_RESERVATION_DURATION_MS = 4 * 60 * 60 * 1000; // 4 horas consecutivas (14,400,000 ms)
 
 type ReservationWithRelations = Prisma.ReservationGetPayload<{
   include: {
@@ -207,6 +208,18 @@ export async function POST(
         {
           error:
             "Fuera de horario operativo: Las reservas solo están permitidas entre las 06:00 y las 22:00 del mismo día.",
+        },
+        { status: 400 }
+      );
+    }
+
+    // 3.1. Validar límite de duración máxima de reserva (máximo 4 horas consecutivas)
+    const durationMs =
+      parsedEnd.dateObj.getTime() - parsedStart.dateObj.getTime();
+    if (durationMs > MAX_RESERVATION_DURATION_MS) {
+      return NextResponse.json(
+        {
+          error: "La reserva no puede exceder las 4 horas consecutivas",
         },
         { status: 400 }
       );
