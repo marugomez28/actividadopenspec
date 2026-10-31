@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, Space } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth";
 
 // GET /api/spaces - Listar todos los espacios académicos
 export async function GET(): Promise<NextResponse<Space[] | { error: string }>> {
@@ -18,28 +19,22 @@ export async function GET(): Promise<NextResponse<Space[] | { error: string }>> 
   }
 }
 
-// POST /api/spaces - Crear un nuevo espacio académico (Solo Administradores)
+// POST /api/spaces - Crear un nuevo espacio académico (Exclusivo rol Administrador)
 export async function POST(
   request: NextRequest
 ): Promise<NextResponse<Space | { error: string }>> {
   try {
+    const auth = await requireAdmin(request);
+    if (auth.errorResponse) {
+      return auth.errorResponse;
+    }
+
     const body = await request.json();
-    const { name, capacity, isActive, role } = body as {
+    const { name, capacity, isActive } = body as {
       name?: string;
       capacity?: number | string;
       isActive?: boolean;
-      role?: string;
     };
-
-    const headerRole = request.headers.get("x-user-role");
-    const effectiveRole = role ?? headerRole ?? "Administrador";
-
-    if (effectiveRole !== "Administrador") {
-      return NextResponse.json(
-        { error: "Acceso denegado: Solo los administradores pueden crear o modificar espacios." },
-        { status: 403 }
-      );
-    }
 
     if (!name || typeof name !== "string" || name.trim().length === 0) {
       return NextResponse.json(

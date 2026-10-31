@@ -1,10 +1,17 @@
 "use client";
 
 import React, { useEffect, useState, FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import type { Space, Reservation, User } from "@prisma/client";
 
 type UserRole = "Administrador" | "Estudiante";
 type ReservationStatus = "Pendiente" | "Aprobado" | "Rechazado" | "Cancelado";
+
+interface SessionUser {
+  userId: number;
+  email: string;
+  role: UserRole;
+}
 
 type ReservationWithDetails = Reservation & {
   user?: User;
@@ -12,12 +19,13 @@ type ReservationWithDetails = Reservation & {
 };
 
 export default function SpacesManagementPage() {
+  const router = useRouter();
+  const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [reservations, setReservations] = useState<ReservationWithDetails[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [role, setRole] = useState<UserRole>("Administrador");
 
-  // Estado del formulario de creación de espacios
+  // Estado del formulario de creación de espacios (Exclusivo Administrador)
   const [name, setName] = useState<string>("");
   const [capacity, setCapacity] = useState<string>("");
   const [isActive, setIsActive] = useState<boolean>(true);
@@ -25,28 +33,44 @@ export default function SpacesManagementPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Estado del formulario de solicitud de reserva (Tarea 4)
+  // Estado del formulario de solicitud de reserva
   const [selectedSpaceId, setSelectedSpaceId] = useState<string>("");
-  const [userEmail, setUserEmail] = useState<string>("juan@universidad.edu");
   const [reservationDate, setReservationDate] = useState<string>("2026-11-05");
   const [startTime, setStartTime] = useState<string>("08:00");
   const [endTime, setEndTime] = useState<string>("10:00");
-  const [submittingReservation, setSubmittingReservation] = useState<boolean>(false);
+  const [submittingReservation, setSubmittingReservation] =
+    useState<boolean>(false);
   const [reservationError, setReservationError] = useState<string | null>(null);
-  const [reservationSuccess, setReservationSuccess] = useState<string | null>(null);
-
-  // Estado de actualización de reservas (Tarea 5: Aprobación, Rechazo y Cancelación)
-  const [updatingReservationId, setUpdatingReservationId] = useState<number | null>(
+  const [reservationSuccess, setReservationSuccess] = useState<string | null>(
     null
   );
+
+  // Estado de actualización de reservas (Aprobación, Rechazo y Cancelación)
+  const [updatingReservationId, setUpdatingReservationId] = useState<
+    number | null
+  >(null);
   const [actionMessage, setActionMessage] = useState<{
     type: "success" | "error";
     text: string;
   } | null>(null);
 
-  const fetchSpacesAndReservations = async () => {
+  const fetchDashboardData = async () => {
     setLoading(true);
     try {
+      const sessionRes = await fetch("/api/auth/session");
+      if (!sessionRes.ok) {
+        router.push("/login");
+        return;
+      }
+      const sessionData = (await sessionRes.json()) as {
+        user: SessionUser | null;
+      };
+      if (!sessionData.user) {
+        router.push("/login");
+        return;
+      }
+      setSessionUser(sessionData.user);
+
       const [spacesRes, reservationsRes] = await Promise.all([
         fetch("/api/spaces"),
         fetch("/api/reservations"),
@@ -75,8 +99,14 @@ export default function SpacesManagementPage() {
   };
 
   useEffect(() => {
-    fetchSpacesAndReservations();
+    fetchDashboardData();
   }, []);
+
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  };
 
   const handleCreateSpace = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -89,13 +119,11 @@ export default function SpacesManagementPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-user-role": role,
         },
         body: JSON.stringify({
           name,
           capacity: Number(capacity),
           isActive,
-          role,
         }),
       });
 
@@ -136,11 +164,9 @@ export default function SpacesManagementPage() {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          "x-user-role": role,
         },
         body: JSON.stringify({
           isActive: !space.isActive,
-          role,
         }),
       });
 
@@ -168,9 +194,6 @@ export default function SpacesManagementPage() {
     try {
       const response = await fetch(`/api/spaces/${id}`, {
         method: "DELETE",
-        headers: {
-          "x-user-role": role,
-        },
       });
 
       const result = await response.json();
@@ -203,7 +226,6 @@ export default function SpacesManagementPage() {
         },
         body: JSON.stringify({
           spaceId: Number(selectedSpaceId),
-          email: userEmail,
           date: reservationDate,
           startTime: `${reservationDate}T${startTime}:00`,
           endTime: `${reservationDate}T${endTime}:00`,
@@ -213,17 +235,21 @@ export default function SpacesManagementPage() {
       const result = await response.json();
 
       if (!response.ok) {
-        setReservationError(result.error || "No se pudo registrar la reserva.");
+        setReservationError(
+          result.error || "No se pudo registrar la reserva."
+        );
         return;
       }
 
       setReservationSuccess(
         "Solicitud de reserva creada exitosamente con estado 'Pendiente'."
       );
-      await fetchSpacesAndReservations();
+      await fetchDashboardData();
     } catch (error) {
       console.error(error);
-      setReservationError("Error de red al procesar la solicitud de reserva.");
+      setReservationError(
+        "Error de red al procesar la solicitud de reserva."
+      );
     } finally {
       setSubmittingReservation(false);
     }
@@ -241,11 +267,9 @@ export default function SpacesManagementPage() {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          "x-user-role": role,
         },
         body: JSON.stringify({
           status: newStatus,
-          role,
         }),
       });
 
@@ -293,13 +317,14 @@ export default function SpacesManagementPage() {
     }
   };
 
+  const isAdmin = sessionUser?.role === "Administrador";
   const pendingReservations = reservations.filter(
     (r) => r.status === "Pendiente"
   );
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Encabezado */}
+      {/* Encabezado con usuario autenticado y cierre de sesión */}
       <header className="bg-white border-b border-slate-200 shadow-xs">
         <div className="max-w-6xl mx-auto px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
@@ -311,33 +336,36 @@ export default function SpacesManagementPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <label
-              htmlFor="role-select"
-              className="text-xs font-medium text-slate-600 uppercase tracking-wider"
-            >
-              Rol activo:
-            </label>
-            <select
-              id="role-select"
-              value={role}
-              onChange={(e) => {
-                setRole(e.target.value as UserRole);
-                setErrorMsg(null);
-                setSuccessMsg(null);
-                setActionMessage(null);
-              }}
-              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-2xs focus:border-blue-600 focus:outline-none"
-            >
-              <option value="Administrador">Administrador</option>
-              <option value="Estudiante">Estudiante</option>
-            </select>
-          </div>
+          {sessionUser && (
+            <div className="flex items-center gap-3">
+              <div className="text-right">
+                <p className="text-sm font-medium text-slate-900">
+                  {sessionUser.email}
+                </p>
+                <span
+                  className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                    isAdmin
+                      ? "bg-blue-100 text-blue-800"
+                      : "bg-indigo-100 text-indigo-800"
+                  }`}
+                >
+                  Rol: {sessionUser.role}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer"
+              >
+                Cerrar sesión
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8 space-y-8">
-        {/* Sección 1: Gestión de Espacios */}
+        {/* Sección 1: Gestión y Catálogo de Espacios */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <section className="lg:col-span-1">
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs">
@@ -345,83 +373,92 @@ export default function SpacesManagementPage() {
                 Registrar Nuevo Espacio
               </h2>
               <p className="text-xs text-slate-500 mb-5">
-                Solo los usuarios con rol Administrador pueden crear o modificar espacios.
+                Exclusivo para usuarios autenticados con rol Administrador.
               </p>
 
-              {errorMsg && (
-                <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">
-                  {errorMsg}
+              {!isAdmin ? (
+                <div className="rounded-lg bg-slate-100 border border-slate-200 p-4 text-xs text-slate-600">
+                  Has iniciado sesión como <strong>Estudiante</strong>. Solo el rol{" "}
+                  <strong>Administrador</strong> tiene permisos para crear o modificar espacios académicos.
                 </div>
+              ) : (
+                <>
+                  {errorMsg && (
+                    <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+                      {errorMsg}
+                    </div>
+                  )}
+
+                  {successMsg && (
+                    <div className="mb-4 rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-700">
+                      {successMsg}
+                    </div>
+                  )}
+
+                  <form onSubmit={handleCreateSpace} className="space-y-4">
+                    <div>
+                      <label
+                        htmlFor="space-name"
+                        className="block text-sm font-medium text-slate-700 mb-1"
+                      >
+                        Nombre del espacio
+                      </label>
+                      <input
+                        id="space-name"
+                        type="text"
+                        required
+                        placeholder="Ej. Laboratorio de Física"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-600 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="space-capacity"
+                        className="block text-sm font-medium text-slate-700 mb-1"
+                      >
+                        Capacidad (personas)
+                      </label>
+                      <input
+                        id="space-capacity"
+                        type="number"
+                        min={1}
+                        required
+                        placeholder="Ej. 30"
+                        value={capacity}
+                        onChange={(e) => setCapacity(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-600 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <input
+                        id="space-active"
+                        type="checkbox"
+                        checked={isActive}
+                        onChange={(e) => setIsActive(e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <label
+                        htmlFor="space-active"
+                        className="text-sm text-slate-700"
+                      >
+                        Marcar como Disponible (Activo)
+                      </label>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={submitting}
+                      className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-xs hover:bg-blue-700 disabled:opacity-50 transition-colors cursor-pointer"
+                    >
+                      {submitting ? "Guardando..." : "Guardar Espacio"}
+                    </button>
+                  </form>
+                </>
               )}
-
-              {successMsg && (
-                <div className="mb-4 rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-700">
-                  {successMsg}
-                </div>
-              )}
-
-              <form onSubmit={handleCreateSpace} className="space-y-4">
-                <div>
-                  <label
-                    htmlFor="space-name"
-                    className="block text-sm font-medium text-slate-700 mb-1"
-                  >
-                    Nombre del espacio
-                  </label>
-                  <input
-                    id="space-name"
-                    type="text"
-                    required
-                    placeholder="Ej. Laboratorio de Física"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-600 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="space-capacity"
-                    className="block text-sm font-medium text-slate-700 mb-1"
-                  >
-                    Capacidad (personas)
-                  </label>
-                  <input
-                    id="space-capacity"
-                    type="number"
-                    min={1}
-                    required
-                    placeholder="Ej. 30"
-                    value={capacity}
-                    onChange={(e) => setCapacity(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-600 focus:outline-none"
-                  />
-                </div>
-
-                <div className="flex items-center gap-2 pt-1">
-                  <input
-                    id="space-active"
-                    type="checkbox"
-                    checked={isActive}
-                    onChange={(e) => setIsActive(e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  <label
-                    htmlFor="space-active"
-                    className="text-sm text-slate-700"
-                  >
-                    Marcar como Disponible (Activo)
-                  </label>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-xs hover:bg-blue-700 disabled:opacity-50 transition-colors cursor-pointer"
-                >
-                  {submitting ? "Guardando..." : "Guardar Espacio"}
-                </button>
-              </form>
             </div>
           </section>
 
@@ -450,9 +487,6 @@ export default function SpacesManagementPage() {
                   <p className="text-sm font-medium text-slate-700">
                     No hay espacios registrados todavía
                   </p>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Utiliza el formulario para registrar el primer espacio académico.
-                  </p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -463,7 +497,7 @@ export default function SpacesManagementPage() {
                         <th className="py-3 px-3 font-semibold">Nombre</th>
                         <th className="py-3 px-3 font-semibold">Capacidad</th>
                         <th className="py-3 px-3 font-semibold">Estado</th>
-                        {role === "Administrador" && (
+                        {isAdmin && (
                           <th className="py-3 px-3 font-semibold text-right">
                             Acciones
                           </th>
@@ -493,7 +527,7 @@ export default function SpacesManagementPage() {
                               </span>
                             )}
                           </td>
-                          {role === "Administrador" && (
+                          {isAdmin && (
                             <td className="py-3 px-3 text-right space-x-2">
                               <button
                                 type="button"
@@ -529,7 +563,7 @@ export default function SpacesManagementPage() {
                 Solicitar Reserva de Espacio
               </h2>
               <p className="text-xs text-slate-500 mb-5">
-                Horario operativo permitido: 06:00 a 22:00. Sin solapamientos.
+                Horario operativo: 06:00 a 22:00. Máximo 4 horas consecutivas.
               </p>
 
               {reservationError && (
@@ -546,20 +580,14 @@ export default function SpacesManagementPage() {
 
               <form onSubmit={handleCreateReservation} className="space-y-4">
                 <div>
-                  <label
-                    htmlFor="reservation-email"
-                    className="block text-sm font-medium text-slate-700 mb-1"
-                  >
-                    Correo institucional
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Usuario solicitante
                   </label>
                   <input
-                    id="reservation-email"
                     type="email"
-                    required
-                    placeholder="juan@universidad.edu"
-                    value={userEmail}
-                    onChange={(e) => setUserEmail(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-blue-600 focus:outline-none"
+                    disabled
+                    value={sessionUser?.email ?? ""}
+                    className="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-600"
                   />
                 </div>
 
@@ -653,7 +681,7 @@ export default function SpacesManagementPage() {
           </section>
 
           <section className="lg:col-span-2 space-y-6">
-            {/* Panel de Administrador para Aprobación / Rechazo (Tarea 5) */}
+            {/* Panel de Administración: Aprobación de Solicitudes */}
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs">
               <div className="flex items-center justify-between mb-4">
                 <div>
@@ -669,9 +697,11 @@ export default function SpacesManagementPage() {
                 </span>
               </div>
 
-              {role !== "Administrador" ? (
+              {!isAdmin ? (
                 <div className="rounded-lg bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">
-                  Acceso restringido: Tu rol actual es <strong>Estudiante</strong>. Solo los usuarios con rol <strong>Administrador</strong> pueden aprobar o rechazar solicitudes de reserva.
+                  Acceso restringido: Tu sesión tiene el rol{" "}
+                  <strong>Estudiante</strong>. Solo los usuarios autenticados como{" "}
+                  <strong>Administrador</strong> pueden aprobar o rechazar solicitudes de reserva.
                 </div>
               ) : pendingReservations.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-slate-300 py-8 text-center">
@@ -686,7 +716,9 @@ export default function SpacesManagementPage() {
                       <tr className="border-b border-slate-200 text-xs uppercase text-slate-500">
                         <th className="py-2.5 px-3 font-semibold">ID</th>
                         <th className="py-2.5 px-3 font-semibold">Espacio</th>
-                        <th className="py-2.5 px-3 font-semibold">Solicitante</th>
+                        <th className="py-2.5 px-3 font-semibold">
+                          Solicitante
+                        </th>
                         <th className="py-2.5 px-3 font-semibold">Horario</th>
                         <th className="py-2.5 px-3 font-semibold text-right">
                           Decisión Administrador
@@ -720,7 +752,10 @@ export default function SpacesManagementPage() {
                               type="button"
                               disabled={updatingReservationId === res.id}
                               onClick={() =>
-                                handleUpdateReservationStatus(res.id, "Aprobado")
+                                handleUpdateReservationStatus(
+                                  res.id,
+                                  "Aprobado"
+                                )
                               }
                               className="inline-flex items-center rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
                             >
@@ -748,7 +783,7 @@ export default function SpacesManagementPage() {
               )}
             </div>
 
-            {/* Historial General y Opción de Cancelación para el Usuario (Tarea 5) */}
+            {/* Historial General y Opción de Cancelación para el Usuario */}
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs">
               <div className="flex items-center justify-between mb-4">
                 <div>
@@ -789,7 +824,9 @@ export default function SpacesManagementPage() {
                       <tr className="border-b border-slate-200 text-xs uppercase text-slate-500">
                         <th className="py-3 px-3 font-semibold">ID</th>
                         <th className="py-3 px-3 font-semibold">Espacio</th>
-                        <th className="py-3 px-3 font-semibold">Solicitante</th>
+                        <th className="py-3 px-3 font-semibold">
+                          Solicitante
+                        </th>
                         <th className="py-3 px-3 font-semibold">Inicio</th>
                         <th className="py-3 px-3 font-semibold">Fin</th>
                         <th className="py-3 px-3 font-semibold">Estado</th>

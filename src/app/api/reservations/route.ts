@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, Reservation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/auth";
 
 const OPERATING_START_MINUTES = 6 * 60; // 06:00 (360 min)
 const OPERATING_END_MINUTES = 22 * 60; // 22:00 (1320 min)
@@ -153,13 +154,18 @@ export async function GET(): Promise<
   }
 }
 
-// POST /api/reservations - Crear una solicitud de reserva con validación de horario y solapamiento
+// POST /api/reservations - Crear una solicitud de reserva (Requiere usuario autenticado)
 export async function POST(
   request: NextRequest
 ): Promise<NextResponse<Reservation | { error: string }>> {
   try {
+    const auth = await requireAuth(request);
+    if (auth.errorResponse) {
+      return auth.errorResponse;
+    }
+
     const body = (await request.json()) as CreateReservationBody;
-    const { userId, email, spaceId, date, startTime, endTime } = body;
+    const { spaceId, date, startTime, endTime } = body;
 
     // 1. Validar presencia de campos obligatorios
     const parsedSpaceId = Number(spaceId);
@@ -172,7 +178,10 @@ export async function POST(
 
     if (!startTime || !endTime) {
       return NextResponse.json(
-        { error: "La hora de inicio (startTime) y hora de fin (endTime) son obligatorias." },
+        {
+          error:
+            "La hora de inicio (startTime) y hora de fin (endTime) son obligatorias.",
+        },
         { status: 400 }
       );
     }
@@ -239,14 +248,15 @@ export async function POST(
 
     if (!space.isActive) {
       return NextResponse.json(
-        { error: "El espacio seleccionado no se encuentra activo para reservas." },
+        {
+          error:
+            "El espacio seleccionado no se encuentra activo para reservas.",
+        },
         { status: 400 }
       );
     }
 
     // 5. Consultar Prisma para evitar solapamientos (overlapping) en el mismo espacio
-    // Dos intervalos [startA, endA) y [startB, endB) se solapan si:
-    // existing.startTime < nuevo.endTime AND existing.endTime > nuevo.startTime
     const overlappingReservation = await prisma.reservation.findFirst({
       where: {
         spaceId: parsedSpaceId,
@@ -270,43 +280,19 @@ export async function POST(
       );
     }
 
-    // 6. Resolver o registrar el usuario solicitante (por userId o email institucional)
-    let resolvedUserId: number;
-
-    if (email && typeof email === "string" && email.trim().length > 0) {
-      const normalizedEmail = email.trim().toLowerCase();
-      const user = await prisma.user.upsert({
-        where: { email: normalizedEmail },
-        update: {},
-        create: {
-          email: normalizedEmail,
-          role: "Estudiante",
-        },
-      });
-      resolvedUserId = user.id;
-    } else if (userId !== undefined && Number.isInteger(Number(userId)) && Number(userId) > 0) {
-      const numericUserId = Number(userId);
-      const existingUser = await prisma.user.findUnique({
-        where: { id: numericUserId },
-      });
-
-      if (!existingUser) {
-        return NextResponse.json(
-          { error: `No existe un usuario con el id ${numericUserId}.` },
-          { status: 404 }
-        );
-      }
-      resolvedUserId = existingUser.id;
-    } else {
-      return NextResponse.json(
-        { error: "Debe proporcionar el userId o el correo institucional (email) del solicitante." },
-        { status: 400 }
-      );
-    }
+    // 6. Asociar la reserva al usuario autenticado en la sesión activa
+    const user = await prisma.user.upsert({
+      where: { email: auth.session.email },
+      update: {},
+      create: {
+        email: auth.session.email,
+        role: auth.session.role,
+      },
+    });
 
     // 7. Crear la solicitud de reserva con estado "Pendiente"
     const reservationData: Prisma.ReservationUncheckedCreateInput = {
-      userId: resolvedUserId,
+      userId: user.id,
       spaceId: parsedSpaceId,
       startTime: parsedStart.dateObj,
       endTime: parsedEnd.dateObj,

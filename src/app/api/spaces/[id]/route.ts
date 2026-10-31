@@ -1,41 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, Space } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
-// PATCH /api/spaces/[id] - Modificar un espacio existente (Solo Administradores)
+// PATCH /api/spaces/[id] - Modificar un espacio existente (Exclusivo rol Administrador)
 export async function PATCH(
   request: NextRequest,
   context: RouteContext
 ): Promise<NextResponse<Space | { error: string }>> {
   try {
+    const auth = await requireAdmin(request);
+    if (auth.errorResponse) {
+      return auth.errorResponse;
+    }
+
     const { id } = await context.params;
     const spaceId = Number(id);
 
     if (!Number.isInteger(spaceId) || spaceId <= 0) {
-      return NextResponse.json({ error: "ID de espacio inválido." }, { status: 400 });
+      return NextResponse.json(
+        { error: "ID de espacio inválido." },
+        { status: 400 }
+      );
     }
 
     const body = await request.json();
-    const { name, capacity, isActive, role } = body as {
+    const { name, capacity, isActive } = body as {
       name?: string;
       capacity?: number | string;
       isActive?: boolean;
-      role?: string;
     };
-
-    const headerRole = request.headers.get("x-user-role");
-    const effectiveRole = role ?? headerRole ?? "Administrador";
-
-    if (effectiveRole !== "Administrador") {
-      return NextResponse.json(
-        { error: "Acceso denegado: Solo los administradores pueden crear o modificar espacios." },
-        { status: 403 }
-      );
-    }
 
     const updateData: Prisma.SpaceUpdateInput = {};
 
@@ -79,24 +77,24 @@ export async function PATCH(
   }
 }
 
-// DELETE /api/spaces/[id] - Eliminar un espacio (Solo Administradores)
+// DELETE /api/spaces/[id] - Eliminar un espacio (Exclusivo rol Administrador)
 export async function DELETE(
   request: NextRequest,
   context: RouteContext
 ): Promise<NextResponse<{ message: string } | { error: string }>> {
   try {
+    const auth = await requireAdmin(request);
+    if (auth.errorResponse) {
+      return auth.errorResponse;
+    }
+
     const { id } = await context.params;
     const spaceId = Number(id);
 
     if (!Number.isInteger(spaceId) || spaceId <= 0) {
-      return NextResponse.json({ error: "ID de espacio inválido." }, { status: 400 });
-    }
-
-    const headerRole = request.headers.get("x-user-role") ?? "Administrador";
-    if (headerRole !== "Administrador") {
       return NextResponse.json(
-        { error: "Acceso denegado: Solo los administradores pueden eliminar espacios." },
-        { status: 403 }
+        { error: "ID de espacio inválido." },
+        { status: 400 }
       );
     }
 

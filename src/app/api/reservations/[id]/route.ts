@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/auth";
 
 type ReservationStatus = "Pendiente" | "Aprobado" | "Rechazado" | "Cancelado";
 
@@ -17,15 +18,19 @@ interface RouteContext {
 
 interface UpdateReservationStatusBody {
   status?: ReservationStatus;
-  role?: string;
 }
 
-// PATCH /api/reservations/[id] - Aprobar/Rechazar (Administrador) o Cancelar (Usuario) una reserva
+// PATCH /api/reservations/[id] - Aprobar/Rechazar (Administrador) o Cancelar (Usuario autenticado)
 export async function PATCH(
   request: NextRequest,
   context: RouteContext
 ): Promise<NextResponse<ReservationWithRelations | { error: string }>> {
   try {
+    const auth = await requireAuth(request);
+    if (auth.errorResponse) {
+      return auth.errorResponse;
+    }
+
     const { id } = await context.params;
     const reservationId = Number(id);
 
@@ -37,10 +42,7 @@ export async function PATCH(
     }
 
     const body = (await request.json()) as UpdateReservationStatusBody;
-    const { status, role } = body;
-
-    const headerRole = request.headers.get("x-user-role");
-    const effectiveRole = role ?? headerRole ?? "Estudiante";
+    const { status } = body;
 
     if (
       !status ||
@@ -55,15 +57,15 @@ export async function PATCH(
       );
     }
 
-    // Regla 7: Solo los administradores pueden cambiar el estado a "Aprobado" o "Rechazado"
+    // Regla RBAC: Solo el rol "Administrador" puede aprobar o rechazar reservas
     if (
       (status === "Aprobado" || status === "Rechazado") &&
-      effectiveRole !== "Administrador"
+      auth.session.role !== "Administrador"
     ) {
       return NextResponse.json(
         {
           error:
-            "Acceso denegado: Solo los administradores pueden aprobar o rechazar solicitudes de reserva.",
+            "Acceso denegado: Se requiere rol Administrador para aprobar o rechazar solicitudes de reserva.",
         },
         { status: 403 }
       );
@@ -91,7 +93,6 @@ export async function PATCH(
         );
       }
 
-      // Al aprobar, verificar que no exista conflicto de horario con otra reserva activa
       if (status === "Aprobado") {
         const overlapping = await prisma.reservation.findFirst({
           where: {
