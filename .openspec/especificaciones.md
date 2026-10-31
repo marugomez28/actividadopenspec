@@ -53,3 +53,10 @@
   * **Dado** un estudiante con una reserva aprobada para el día siguiente
   * **Cuando** cancela su reserva
   * **Entonces** el estado cambia a "Cancelado", el espacio vuelve a estar disponible y la acción queda registrada en su historial.
+
+  ## 9. Límite de duración de reserva (Nueva Regla)
+* **Regla:** Ningún usuario podrá reservar un espacio académico durante más de cuatro horas consecutivas.
+* **Escenario de aceptación:**
+  * **Dado** un usuario autenticado
+  * **Cuando** solicita reservar un espacio por 5 horas (ej. de 08:00 a 13:00)
+  * **Entonces** el sistema rechaza la solicitud indicando "La reserva no puede exceder las 4 horas consecutivas".
